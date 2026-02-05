@@ -4,11 +4,15 @@ An on-device search engine for everything you need to remember. Index your markd
 
 QMD combines BM25 full-text search, vector semantic search, and LLM re-ranking—all running locally via node-llama-cpp with GGUF models.
 
+**This project is a fork of [tobi/qmd](https://github.com/tobi/qmd)** (Go port, optional GGUF embedding backend).
+
 ## Quick Start
 
 ```sh
-# Install globally
-bun install -g https://github.com/tobi/qmd
+# Install (requires Go 1.23+)
+go install -tags fts5 github.com/ba0f3/qmd-go
+# Or from repo:
+# git clone https://github.com/ba0f3/qmd-go && cd qmd && go build -tags fts5 -o qmd-go ./cmd/qmd
 
 # Create collections for your notes, docs, and meeting transcripts
 qmd collection add ~/notes --name notes
@@ -61,17 +65,19 @@ qmd get "docs/api-reference.md" --full
 
 ### MCP Server
 
-Although the tool works perfectly fine when you just tell your agent to use it on the command line, it also exposes an MCP (Model Context Protocol) server for tighter integration.
+QMD exposes an MCP (Model Context Protocol) server for integration with Claude, Cursor, and other AI tools.
 
 **Tools exposed:**
-- `qmd_search` - Fast BM25 keyword search (supports collection filter)
-- `qmd_vsearch` - Semantic vector search (supports collection filter)
-- `qmd_query` - Hybrid search with reranking (supports collection filter)
-- `qmd_get` - Retrieve document by path or docid (with fuzzy matching suggestions)
-- `qmd_multi_get` - Retrieve multiple documents by glob pattern, list, or docids
-- `qmd_status` - Index health and collection info
+- `search` – Fast BM25 keyword search (supports collection filter)
+- `vsearch` – Semantic vector search (supports collection filter)
+- `query` – Hybrid search (BM25 + vector, RRF)
+- `get` – Retrieve document by path or docid
+- `multi_get` – Retrieve multiple documents by glob or list
+- `status` – Index health and collection info
 
-**Claude Desktop configuration** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+**Resources:** Documents are readable via `qmd://` URIs (e.g. `qmd://collection/path/to/file.md`).
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
 {
@@ -106,139 +112,70 @@ Or configure MCP manually in `~/.claude/settings.json`:
 
 ## Architecture
 
+- **SQLite FTS5** – Full-text search (BM25)
+- **Embeddings** – Stored in SQLite; generated via Ollama or any OpenAI-compatible embedding API
+- **Hybrid search** – `query` combines BM25 and vector results using Reciprocal Rank Fusion (RRF)
+- **Chunking** – 800 tokens per chunk, 15% overlap (character-based in Go)
+- **Index** – `~/.cache/qmd/index.sqlite` (or `INDEX_PATH`)
+
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         QMD Hybrid Search Pipeline                          │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-                              ┌─────────────────┐
-                              │   User Query    │
-                              └────────┬────────┘
-                                       │
-                        ┌──────────────┴──────────────┐
-                        ▼                             ▼
-               ┌────────────────┐            ┌────────────────┐
-               │ Query Expansion│            │  Original Query│
-               │  (fine-tuned)  │            │   (×2 weight)  │
-               └───────┬────────┘            └───────┬────────┘
-                       │                             │
-                       │ 2 alternative queries       │
-                       └──────────────┬──────────────┘
-                                      │
-              ┌───────────────────────┼───────────────────────┐
-              ▼                       ▼                       ▼
-     ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-     │ Original Query  │     │ Expanded Query 1│     │ Expanded Query 2│
-     └────────┬────────┘     └────────┬────────┘     └────────┬────────┘
-              │                       │                       │
-      ┌───────┴───────┐       ┌───────┴───────┐       ┌───────┴───────┐
-      ▼               ▼       ▼               ▼       ▼               ▼
-  ┌───────┐       ┌───────┐ ┌───────┐     ┌───────┐ ┌───────┐     ┌───────┐
-  │ BM25  │       │Vector │ │ BM25  │     │Vector │ │ BM25  │     │Vector │
-  │(FTS5) │       │Search │ │(FTS5) │     │Search │ │(FTS5) │     │Search │
-  └───┬───┘       └───┬───┘ └───┬───┘     └───┬───┘ └───┬───┘     └───┬───┘
-      │               │         │             │         │             │
-      └───────┬───────┘         └──────┬──────┘         └──────┬──────┘
-              │                        │                       │
-              └────────────────────────┼───────────────────────┘
-                                       │
-                                       ▼
-                          ┌───────────────────────┐
-                          │   RRF Fusion + Bonus  │
-                          │  Original query: ×2   │
-                          │  Top-rank bonus: +0.05│
-                          │     Top 30 Kept       │
-                          └───────────┬───────────┘
-                                      │
-                                      ▼
-                          ┌───────────────────────┐
-                          │    LLM Re-ranking     │
-                          │  (qwen3-reranker)     │
-                          │  Yes/No + logprobs    │
-                          └───────────┬───────────┘
-                                      │
-                                      ▼
-                          ┌───────────────────────┐
-                          │  Position-Aware Blend │
-                          │  Top 1-3:  75% RRF    │
-                          │  Top 4-10: 60% RRF    │
-                          │  Top 11+:  40% RRF    │
-                          └───────────────────────┘
+Query ──┬──► BM25 (FTS5) ──► Ranked list
+        │
+        └──► Embed query ──► Vector similarity ──► Ranked list
+                                    │
+                                    ▼
+                            RRF fusion ──► Final results
 ```
-
-## Score Normalization & Fusion
-
-### Search Backends
-
-| Backend | Raw Score | Conversion | Range |
-|---------|-----------|------------|-------|
-| **FTS (BM25)** | SQLite FTS5 BM25 | `Math.abs(score)` | 0 to ~25+ |
-| **Vector** | Cosine distance | `1 / (1 + distance)` | 0.0 to 1.0 |
-| **Reranker** | LLM 0-10 rating | `score / 10` | 0.0 to 1.0 |
-
-### Fusion Strategy
-
-The `query` command uses **Reciprocal Rank Fusion (RRF)** with position-aware blending:
-
-1. **Query Expansion**: Original query (×2 for weighting) + 1 LLM variation
-2. **Parallel Retrieval**: Each query searches both FTS and vector indexes
-3. **RRF Fusion**: Combine all result lists using `score = Σ(1/(k+rank+1))` where k=60
-4. **Top-Rank Bonus**: Documents ranking #1 in any list get +0.05, #2-3 get +0.02
-5. **Top-K Selection**: Take top 30 candidates for reranking
-6. **Re-ranking**: LLM scores each document (yes/no with logprobs confidence)
-7. **Position-Aware Blending**:
-   - RRF rank 1-3: 75% retrieval, 25% reranker (preserves exact matches)
-   - RRF rank 4-10: 60% retrieval, 40% reranker
-   - RRF rank 11+: 40% retrieval, 60% reranker (trust reranker more)
-
-**Why this approach**: Pure RRF can dilute exact matches when expanded queries don't match. The top-rank bonus preserves documents that score #1 for the original query. Position-aware blending prevents the reranker from destroying high-confidence retrieval results.
-
-### Score Interpretation
-
-| Score | Meaning |
-|-------|---------|
-| 0.8 - 1.0 | Highly relevant |
-| 0.5 - 0.8 | Moderately relevant |
-| 0.2 - 0.5 | Somewhat relevant |
-| 0.0 - 0.2 | Low relevance |
 
 ## Requirements
 
-### System Requirements
+- **Go** 1.23 or later (for building)
+- **SQLite** with FTS5 (e.g. `github.com/mattn/go-sqlite3` – enable via build tag `fts5`)
+- **Embeddings**: [Ollama](https://ollama.ai) (default) or any OpenAI-compatible API (set `OLLAMA_HOST` or use `OPENAI_API_BASE` + `OPENAI_API_KEY` for embed)
 
-- **Bun** >= 1.0.0
-- **macOS**: Homebrew SQLite (for extension support)
-  ```sh
-  brew install sqlite
-  ```
+### Build tags
 
-### GGUF Models (via node-llama-cpp)
+| Tag   | Purpose |
+|-------|---------|
+| `fts5` | **Use for normal builds.** Enables SQLite FTS5 full-text search. Without it, `qmd search` and related features will not work. |
+| `gguf` | Optional. Enables local/Hugging Face GGUF embedding models (no Ollama required). Requires CGO and [go-llama.cpp](https://github.com/go-skynet/go-llama.cpp); use `make deps-gguf` then `make build-gguf`. |
 
-QMD uses three local GGUF models (auto-downloaded on first use):
-
-| Model | Purpose | Size |
-|-------|---------|------|
-| `embeddinggemma-300M-Q8_0` | Vector embeddings | ~300MB |
-| `qwen3-reranker-0.6b-q8_0` | Re-ranking | ~640MB |
-| `qmd-query-expansion-1.7B-q4_k_m` | Query expansion (fine-tuned) | ~1.1GB |
-
-Models are downloaded from HuggingFace and cached in `~/.cache/qmd/models/`.
+**Examples:** `make build` (outputs `qmd-go`) or `go build -tags fts5 -o qmd-go ./cmd/qmd`. For GGUF embeddings: `make build-gguf`.
 
 ## Installation
 
+**From source (recommended)**
+
 ```sh
-bun install -g github:tobi/qmd
+git clone https://github.com/tobi/qmd
+cd qmd
+make build
+make install
+# Installs to /usr/local/bin/qmd; ensure /usr/local/bin is in your PATH
 ```
 
-Make sure `~/.bun/bin` is in your PATH.
+To install to a different prefix (e.g. your user directory):
+
+```sh
+make install PREFIX=$HOME/.local
+# Then add $HOME/.local/bin to your PATH
+```
+
+**Using Go install**
+
+```sh
+go install -tags fts5 github.com/ba0f3/qmd-go@latest
+# Binary is installed as qmd-go in $GOPATH/bin or $HOME/go/bin; add that to your PATH
+```
 
 ### Development
 
 ```sh
 git clone https://github.com/tobi/qmd
 cd qmd
-bun install
-bun link
+./qmd --help          # Runs via go run
+make build && ./qmd-go status
+go test ./...
 ```
 
 ## Usage
@@ -269,12 +206,14 @@ qmd ls notes/subfolder
 ### Generate Vector Embeddings
 
 ```sh
-# Embed all indexed documents (800 tokens/chunk, 15% overlap)
+# Embed all indexed documents (Ollama or OpenAI-compatible API)
 qmd embed
 
 # Force re-embed everything
 qmd embed -f
 ```
+
+Set `QMD_EMBED_MODEL` (default: `nomic-embed-text` for Ollama) or use an OpenAI-compatible endpoint.
 
 ### Context Management
 
@@ -287,7 +226,6 @@ qmd context add qmd://docs/api "API documentation"
 
 # Add context from within a collection directory
 cd ~/notes && qmd context add "Personal notes and ideas"
-cd ~/notes/work && qmd context add "Work-related notes"
 
 # Add global context (applies to all collections)
 qmd context add / "Knowledge base for my projects"
@@ -301,15 +239,11 @@ qmd context rm qmd://notes/old
 
 ### Search Commands
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        Search Modes                              │
-├──────────┬───────────────────────────────────────────────────────┤
-│ search   │ BM25 full-text search only                           │
-│ vsearch  │ Vector semantic search only                          │
-│ query    │ Hybrid: FTS + Vector + Query Expansion + Re-ranking  │
-└──────────┴───────────────────────────────────────────────────────┘
-```
+| Command   | Description                                      |
+|----------|--------------------------------------------------|
+| `search` | BM25 full-text search only                       |
+| `vsearch` | Vector semantic search only                    |
+| `query`  | Hybrid: BM25 + vector, RRF (no LLM reranker)     |
 
 ```sh
 # Full-text search (fast, keyword-based)
@@ -318,7 +252,7 @@ qmd search "authentication flow"
 # Vector search (semantic similarity)
 qmd vsearch "how to login"
 
-# Hybrid search with re-ranking (best quality)
+# Hybrid search (best quality without external reranker)
 qmd query "user authentication"
 ```
 
@@ -332,7 +266,7 @@ qmd query "user authentication"
 --min-score <num>  # Minimum score threshold (default: 0)
 --full             # Show full document content
 --line-numbers     # Add line numbers to output
---index <name>     # Use named index
+--index <name>     # Use named index (default: index)
 
 # Output formats (for search and multi-get)
 --files            # Output: docid,score,filepath,context
@@ -351,57 +285,10 @@ qmd get <file>[:line]  # Get document, optionally starting at line
 --max-bytes <num>  # Skip files larger than N bytes (default: 10KB)
 ```
 
-### Output Format
-
-Default output is colorized CLI format (respects `NO_COLOR` env):
-
-```
-docs/guide.md:42 #a1b2c3
-Title: Software Craftsmanship
-Context: Work documentation
-Score: 93%
-
-This section covers the **craftsmanship** of building
-quality software with attention to detail.
-See also: engineering principles
-
-
-notes/meeting.md:15 #d4e5f6
-Title: Q4 Planning
-Context: Personal notes and ideas
-Score: 67%
-
-Discussion about code quality and craftsmanship
-in the development process.
-```
-
-- **Path**: Collection-relative path (e.g., `docs/guide.md`)
-- **Docid**: Short hash identifier (e.g., `#a1b2c3`) - use with `qmd get #a1b2c3`
-- **Title**: Extracted from document (first heading or filename)
-- **Context**: Path context if configured via `qmd context add`
-- **Score**: Color-coded (green >70%, yellow >40%, dim otherwise)
-- **Snippet**: Context around match with query terms highlighted
-
-### Examples
-
-```sh
-# Get 10 results with minimum score 0.3
-qmd query -n 10 --min-score 0.3 "API design patterns"
-
-# Output as markdown for LLM context
-qmd search --md --full "error handling"
-
-# JSON output for scripting
-qmd query --json "quarterly reports"
-
-# Use separate index for different knowledge base
-qmd --index work search "quarterly reports"
-```
-
 ### Index Maintenance
 
 ```sh
-# Show index status and collections with contexts
+# Show index status and collections
 qmd status
 
 # Re-index all collections
@@ -410,7 +297,7 @@ qmd update
 # Re-index with git pull first (for remote repos)
 qmd update --pull
 
-# Get document by filepath (with fuzzy matching suggestions)
+# Get document by filepath (with docid fallback)
 qmd get notes/meeting.md
 
 # Get document by docid (from search results)
@@ -437,122 +324,51 @@ qmd cleanup
 
 ## Data Storage
 
-Index stored in: `~/.cache/qmd/index.sqlite`
+Index stored in: `~/.cache/qmd/index.sqlite` (or `INDEX_PATH`; use `--index <name>` for `~/.cache/qmd/<name>.sqlite`).
 
-### Schema
+### Schema (overview)
 
-```sql
-collections     -- Indexed directories with name and glob patterns
-path_contexts   -- Context descriptions by virtual path (qmd://...)
-documents       -- Markdown content with metadata and docid (6-char hash)
-documents_fts   -- FTS5 full-text index
-content_vectors -- Embedding chunks (hash, seq, pos, 800 tokens each)
-vectors_vec     -- sqlite-vec vector index (hash_seq key)
-llm_cache       -- Cached LLM responses (query expansion, rerank scores)
-```
+- **documents** – Paths, titles, content hash, collection, active flag
+- **content** – Full document text (keyed by hash)
+- **documents_fts** – FTS5 full-text index
+- **content_vectors** / **embedding_blobs** – Chunk embeddings for vector search
+- Config (collections, context) – YAML in `~/.config/qmd/index.yml` (or per `--index`)
+
+## Embedding backends
+
+**Default (no build tag):** Embeddings use Ollama or any OpenAI-compatible API. Set `OLLAMA_HOST` and `QMD_EMBED_MODEL` (e.g. `nomic-embed-text`).
+
+**GGUF (optional):** You can use local or Hugging Face GGUF embedding models without an external server.
+
+1. Set `QMD_EMBED_BACKEND=gguf` **or** set `QMD_EMBED_MODEL` to a GGUF spec (see below).
+2. Build QMD with GGUF support. [go-llama.cpp](https://github.com/go-skynet/go-llama.cpp) uses a git submodule for C++ code, so use the Makefile (one-time deps, then build):
+
+   ```sh
+   make deps-gguf   # clone go-llama.cpp + submodules, build libbinding.a (once)
+   make build-gguf  # add replace in go.mod and build qmd with -tags gguf,fts5
+   ```
+
+   This clones go-llama.cpp into `.deps/go-llama.cpp` and runs `make libbinding.a` there, then builds qmd so the CGO compile finds the C++ headers and library.
+
+3. **Model spec** for `QMD_EMBED_MODEL` when using GGUF:
+   - **Local path:** `/path/to/embedding-model-Q8_0.gguf`
+   - **Hugging Face (repo:file):** `ggml-org/embeddinggemma-300M-GGUF:embeddinggemma-300M-Q8_0.gguf`
+   - **Hugging Face (path-style):** `ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf`
+
+   The first time you use a Hugging Face spec, the file is downloaded to `~/.cache/qmd/models` (or `QMD_MODEL_CACHE`).
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `XDG_CACHE_HOME` | `~/.cache` | Cache directory location |
+| `XDG_CACHE_HOME` | `~/.cache` | Cache directory (index SQLite) |
+| `INDEX_PATH` | (derived) | Override index DB path |
+| `OLLAMA_HOST` | `http://localhost:11434/v1` | Ollama API base for embed (API backend only) |
+| `QMD_EMBED_MODEL` | `nomic-embed-text` | Embedding model name or GGUF path/spec |
+| `QMD_EMBED_BACKEND` | (auto) | `gguf` to force GGUF backend (requires build with `-tags gguf`) |
+| `QMD_MODEL_CACHE` | `~/.cache/qmd/models` | Directory for downloaded GGUF models |
 
-## How It Works
-
-### Indexing Flow
-
-```
-Collection ──► Glob Pattern ──► Markdown Files ──► Parse Title ──► Hash Content
-    │                                                   │              │
-    │                                                   │              ▼
-    │                                                   │         Generate docid
-    │                                                   │         (6-char hash)
-    │                                                   │              │
-    └──────────────────────────────────────────────────►└──► Store in SQLite
-                                                                       │
-                                                                       ▼
-                                                                  FTS5 Index
-```
-
-### Embedding Flow
-
-Documents are chunked into 800-token pieces with 15% overlap:
-
-```
-Document ──► Chunk (800 tokens) ──► Format each chunk ──► node-llama-cpp ──► Store Vectors
-                │                    "title | text"        embedBatch()
-                │
-                └─► Chunks stored with:
-                    - hash: document hash
-                    - seq: chunk sequence (0, 1, 2...)
-                    - pos: character position in original
-```
-
-### Query Flow (Hybrid)
-
-```
-Query ──► LLM Expansion ──► [Original, Variant 1, Variant 2]
-                │
-      ┌─────────┴─────────┐
-      ▼                   ▼
-   For each query:     FTS (BM25)
-      │                   │
-      ▼                   ▼
-   Vector Search      Ranked List
-      │
-      ▼
-   Ranked List
-      │
-      └─────────┬─────────┘
-                ▼
-         RRF Fusion (k=60)
-         Original query ×2 weight
-         Top-rank bonus: +0.05/#1, +0.02/#2-3
-                │
-                ▼
-         Top 30 candidates
-                │
-                ▼
-         LLM Re-ranking
-         (yes/no + logprob confidence)
-                │
-                ▼
-         Position-Aware Blend
-         Rank 1-3:  75% RRF / 25% reranker
-         Rank 4-10: 60% RRF / 40% reranker
-         Rank 11+:  40% RRF / 60% reranker
-                │
-                ▼
-         Final Results
-```
-
-## Model Configuration
-
-Models are configured in `src/llm.ts` as HuggingFace URIs:
-
-```typescript
-const DEFAULT_EMBED_MODEL = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
-const DEFAULT_RERANK_MODEL = "hf:ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF/qwen3-reranker-0.6b-q8_0.gguf";
-const DEFAULT_GENERATE_MODEL = "hf:tobil/qmd-query-expansion-1.7B-gguf/qmd-query-expansion-1.7B-q4_k_m.gguf";
-```
-
-### EmbeddingGemma Prompt Format
-
-```
-// For queries
-"task: search result | query: {query}"
-
-// For documents
-"title: {title} | text: {content}"
-```
-
-### Qwen3-Reranker
-
-Uses node-llama-cpp's `createRankingContext()` and `rankAndSort()` API for cross-encoder reranking. Returns documents sorted by relevance score (0.0 - 1.0).
-
-### Qwen3 (Query Expansion)
-
-Used for generating query variations via `LlamaChatSession`.
+For OpenAI-compatible APIs, set your provider’s base URL and API key (e.g. `OPENAI_API_BASE`, `OPENAI_API_KEY`); the Go CLI uses the same env names as typical OpenAI clients where applicable.
 
 ## License
 

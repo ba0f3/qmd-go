@@ -57,7 +57,7 @@ Semantic vector search for conceptual similarity.
 - `minScore` (optional): Minimum relevance score
 
 ### qmd_query
-Hybrid search combining BM25 and vector search (RRF).
+Hybrid search combining BM25, vector search, and LLM re-ranking.
 
 **Parameters:**
 - `query` (required): Search query string
@@ -99,7 +99,8 @@ Get index health and collection information.
 
 ### Slow searches
 - For faster results, use `qmd_search` instead of `qmd_query`
-- Vector search requires embeddings (run `qmd embed`) and an embedding API (e.g. Ollama)
+- The first search may be slow while models load (~3GB)
+- Subsequent searches are much faster
 
 ## Choosing Between CLI and MCP
 

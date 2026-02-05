@@ -246,11 +246,10 @@ func vsearchTool(s *store.Store) func(context.Context, *mcp.CallToolRequest, vse
 		if model == "" {
 			model = mcpDefaultEmbedModel
 		}
-		baseURL := os.Getenv("OLLAMA_HOST")
-		if baseURL == "" {
-			baseURL = "http://localhost:11434/v1"
+		client, err := llm.NewEmbedClient(model)
+		if err != nil {
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Embed client: " + err.Error()}}, IsError: true}, nil, nil
 		}
-		client := llm.NewOpenAIClient(baseURL, model)
 		formatted := formatQueryForEmbedding(args.Query)
 		emb, err := client.Embed(formatted)
 		if err != nil {
@@ -317,15 +316,13 @@ func queryTool(s *store.Store) func(context.Context, *mcp.CallToolRequest, query
 			if model == "" {
 				model = mcpDefaultEmbedModel
 			}
-			baseURL := os.Getenv("OLLAMA_HOST")
-			if baseURL == "" {
-				baseURL = "http://localhost:11434/v1"
-			}
-			client := llm.NewOpenAIClient(baseURL, model)
-			formatted := formatQueryForEmbedding(args.Query)
-			emb, err := client.Embed(formatted)
+			client, err := llm.NewEmbedClient(model)
 			if err == nil {
-				vecResults, _ = s.SearchVectorsBrute(emb.Embedding, fetchLimit)
+				formatted := formatQueryForEmbedding(args.Query)
+				emb, err := client.Embed(formatted)
+				if err == nil {
+					vecResults, _ = s.SearchVectorsBrute(emb.Embedding, fetchLimit)
+				}
 			}
 		}
 		merged := reciprocalRankFusion(ftsResults, vecResults, limit)

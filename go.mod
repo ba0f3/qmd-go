@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/go-skynet/go-llama.cpp v0.0.0-20240314183750-6a8041ef6b46 // indirect
 	github.com/google/jsonschema-go v0.3.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/modelcontextprotocol/go-sdk v1.2.0 // indirect
@@ -17,3 +18,5 @@ require (
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
 )
+
+replace github.com/go-skynet/go-llama.cpp => ./.deps/go-llama.cpp

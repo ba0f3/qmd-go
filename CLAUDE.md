@@ -116,15 +116,15 @@ qmd multi-get "#abc123, #def456"
 ## Development
 
 ```sh
-go build -o qmd-go ./cmd/qmd   # Build binary
-./qmd --help                   # From repo: script runs go run or qmd-go
+go build -o qmd ./cmd/qmd   # Build binary
+./qmd --help                   # From repo: script runs go run or qmd
 go test ./...
 ```
 
 ## Architecture
 
 - SQLite FTS5 for full-text search (BM25)
-- Embeddings stored in SQLite (embedding_blobs); generated via Ollama or OpenAI-compatible API
+- Embeddings stored in SQLite (embedding_blobs); generated via Ollama/OpenAI-compatible API or GGUF (build with -tags gguf; Hugging Face auto-download in internal/huggingface)
 - Reciprocal Rank Fusion (RRF) for combining BM25 and vector results
 - Token-based chunking: 800 tokens/chunk with 15% overlap (character-based in Go)
 

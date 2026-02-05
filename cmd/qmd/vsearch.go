@@ -45,11 +45,11 @@ var vsearchCmd = &cobra.Command{
 		if model == "" {
 			model = defaultEmbedModel
 		}
-		baseURL := os.Getenv("OLLAMA_HOST")
-		if baseURL == "" {
-			baseURL = "http://localhost:11434/v1"
+		client, err := llm.NewEmbedClient(model)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating embed client: %v\n", err)
+			os.Exit(1)
 		}
-		client := llm.NewOpenAIClient(baseURL, model)
 
 		formatted := formatQueryForEmbedding(query)
 		result, err := client.Embed(formatted)

@@ -110,17 +110,15 @@ var queryCmd = &cobra.Command{
 			if model == "" {
 				model = defaultEmbedModel
 			}
-			baseURL := os.Getenv("OLLAMA_HOST")
-			if baseURL == "" {
-				baseURL = "http://localhost:11434/v1"
-			}
-			client := llm.NewOpenAIClient(baseURL, model)
-			formatted := formatQueryForEmbedding(query)
-			result, err := client.Embed(formatted)
+			client, err := llm.NewEmbedClient(model)
 			if err == nil {
-				vecResults, err = s.SearchVectorsBrute(result.Embedding, fetchLimit)
-				if err != nil {
-					vecResults = nil
+				formatted := formatQueryForEmbedding(query)
+				result, err := client.Embed(formatted)
+				if err == nil {
+					vecResults, err = s.SearchVectorsBrute(result.Embedding, fetchLimit)
+					if err != nil {
+						vecResults = nil
+					}
 				}
 			}
 		}
