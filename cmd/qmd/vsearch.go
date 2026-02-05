@@ -43,7 +43,7 @@ var vsearchCmd = &cobra.Command{
 
 		model := os.Getenv("QMD_EMBED_MODEL")
 		if model == "" {
-			model = defaultEmbedModel
+			model = llm.DefaultEmbedModel()
 		}
 		client, err := llm.NewEmbedClient(model)
 		if err != nil {

@@ -13,3 +13,5 @@ qmd
 qmd-go
 !qmd/
 .deps/
+llama-go/build/
+llama-go/llama.cpp/

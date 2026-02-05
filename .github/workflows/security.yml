@@ -1,0 +1,24 @@
+# .github/workflows/security.yml
+name: Security Scan
+
+on: [push, pull_request]
+
+jobs:
+  medusa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install MEDUSA
+        run: pip install medusa-security
+
+      - name: Install security tools
+        run: medusa install --all --yes
+
+      - name: Run security scan
+        run: medusa scan . --fail-on high

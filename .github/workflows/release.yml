@@ -81,18 +81,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake git
 
-      - name: Clone go-llama.cpp and build libbinding
+      - name: Build qmd-gguf using Makefile
+        env:
+          CGO_ENABLED: '1'
         run: |
-          mkdir -p .deps
-          git clone --recurse-submodules --depth 1 https://github.com/go-skynet/go-llama.cpp .deps/go-llama.cpp
-          cd .deps/go-llama.cpp
-          find . -type f \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.patch' \) -print0 | xargs -0 -r sed -i 's/\r$//' 2>/dev/null || true
-          make libbinding.a
-
-      - name: Build qmd-gguf
-        run: |
-          go mod edit -replace=github.com/go-skynet/go-llama.cpp=./.deps/go-llama.cpp
-          CGO_ENABLED=1 go build -tags gguf,fts5 -ldflags "-s -w" -o qmd-gguf-linux-amd64 ./cmd/qmd
+          make deps-gguf
+          make build-gguf LDFLAGS="-s -w"
+          mv qmd qmd-gguf-linux-amd64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

@@ -178,6 +178,37 @@ make build && ./qmd-go status
 go test ./...
 ```
 
+### Testing the GGUF build
+
+1. **Build with GGUF** (requires [go-llama.cpp](https://github.com/go-skynet/go-llama.cpp) deps):
+
+   ```sh
+   make deps-gguf    # once: clone go-llama.cpp, build libbinding.a
+   make build-gguf   # produces qmd-go
+   ```
+
+2. **Run unit tests** (including GGUF default/backend logic):
+
+   ```sh
+   go test -tags fts5 ./internal/llm/...
+   go test -tags gguf,fts5 ./internal/llm/...   # with GGUF tag
+   ```
+
+3. **Manual embed test** (first run downloads Nomic Embed v1.5 Q8_0, ~146MB, to `~/.cache/qmd/models`):
+
+   ```sh
+   ./qmd-go collection add . --name test
+   ./qmd-go update
+   ./qmd-go embed    # uses local GGUF by default; no Ollama needed
+   ./qmd-go vsearch "some query"
+   ```
+
+4. **Force API backend** with the GGUF binary (e.g. to use Ollama instead):
+
+   ```sh
+   QMD_EMBED_BACKEND=api ./qmd-go embed
+   ```
+
 ## Usage
 
 ### Collection Management
@@ -336,26 +367,62 @@ Index stored in: `~/.cache/qmd/index.sqlite` (or `INDEX_PATH`; use `--index <nam
 
 ## Embedding backends
 
-**Default (no build tag):** Embeddings use Ollama or any OpenAI-compatible API. Set `OLLAMA_HOST` and `QMD_EMBED_MODEL` (e.g. `nomic-embed-text`).
+**Default (no build tag):** Embeddings use Ollama or any OpenAI-compatible API. Default model: `nomic-embed-text`. Set `OLLAMA_HOST` and optionally `QMD_EMBED_MODEL`.
 
-**GGUF (optional):** You can use local or Hugging Face GGUF embedding models without an external server.
+**GGUF build (`-tags gguf`):** When built with GGUF support, the default is a local GGUF embedding model (Nomic Embed Text v1.5). go-llama.cpp uses the **ggerganov/llama.cpp** submodule by default, which may lack support for embedding architectures like `nomic-bert`. To use local GGUF embeddings **without Ollama**, switch the submodule to **ggml-org/llama.cpp** (has nomic_bert and other embed architectures):
 
-1. Set `QMD_EMBED_BACKEND=gguf` **or** set `QMD_EMBED_MODEL` to a GGUF spec (see below).
-2. Build QMD with GGUF support. [go-llama.cpp](https://github.com/go-skynet/go-llama.cpp) uses a git submodule for C++ code, so use the Makefile (one-time deps, then build):
+```sh
+make deps-gguf              # once
+make update-llama-cpp-ggml  # point llama.cpp submodule at ggml-org, rebuild libbinding.a
+make build-gguf
+```
 
+If you prefer to keep using the API (Ollama/OpenAI) for embeddings even with a GGUF build, set:
+
+```sh
+QMD_EMBED_BACKEND=api ./qmd embed
+```
+
+To build with GGUF support, qmd uses two methods (tries purego first, falls back to CGO):
+
+   **Method 1: Purego (kelindar/search method, no CGO)** — recommended for easier cross-compilation:
+   ```sh
+   make deps-purego  # clone llama.cpp submodule (once)
+   make build-purego # build shared library (libllama_go.so / .dll / .dylib)
+   make build-gguf   # build qmd with -tags gguf,fts5 (uses purego if lib found)
+   ```
+
+   **Method 2: CGO (go-llama.cpp)** — fallback if purego lib not found:
    ```sh
    make deps-gguf   # clone go-llama.cpp + submodules, build libbinding.a (once)
    make build-gguf  # add replace in go.mod and build qmd with -tags gguf,fts5
    ```
 
-   This clones go-llama.cpp into `.deps/go-llama.cpp` and runs `make libbinding.a` there, then builds qmd so the CGO compile finds the C++ headers and library.
+   The purego method builds a shared library (`llama-go/build/libllama_go.so`) that qmd loads at runtime. The CGO method compiles go-llama.cpp's binding directly into the binary.
 
-3. **Model spec** for `QMD_EMBED_MODEL` when using GGUF:
-   - **Local path:** `/path/to/embedding-model-Q8_0.gguf`
-   - **Hugging Face (repo:file):** `ggml-org/embeddinggemma-300M-GGUF:embeddinggemma-300M-Q8_0.gguf`
-   - **Hugging Face (path-style):** `ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf`
+2. **GGUF models (Tobi's setup)** — the reference TypeScript/Bun qmd uses three local GGUF models (auto-downloaded from Hugging Face into `~/.cache/qmd/models/`):
 
-   The first time you use a Hugging Face spec, the file is downloaded to `~/.cache/qmd/models` (or `QMD_MODEL_CACHE`).
+   | Model | Purpose | Size | Hugging Face spec |
+   |-------|---------|------|-------------------|
+   | embeddinggemma-300M-Q8_0 | Vector embeddings | ~300 MB | `ggml-org/embeddinggemma-300M-GGUF:embeddinggemma-300M-Q8_0.gguf` |
+   | qwen3-reranker-0.6b-q8_0 | Re-ranking | ~640 MB | `ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF` (reranker not yet in Go build) |
+   | qmd-query-expansion-1.7B-q4_k_m | Query expansion (fine-tuned) | ~1.1 GB | `tobil/qmd-query-expansion-1.7B-gguf:qmd-query-expansion-1.7B-q4_k_m.gguf` (query expansion not yet in Go build) |
+
+   The **Go port** currently uses only the **embedding** model (default: EmbeddingGemma). Reranker and query expansion are not yet implemented in the Go CLI.
+
+3. **Model spec** (optional; GGUF build default: EmbeddingGemma 300M) for `QMD_EMBED_MODEL` when using GGUF:
+   - **Default (Tobi-aligned):** `ggml-org/embeddinggemma-300M-GGUF:embeddinggemma-300M-Q8_0.gguf`
+   - **Local path:** `/path/to/model-Q8_0.gguf`
+   - **Nomic (BERT-based):** `nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf`
+
+   The first time you use a Hugging Face spec, the file is downloaded to `~/.cache/qmd/models` (or `QMD_MODEL_CACHE`). EmbeddingGemma uses the `gemma-embedding` architecture; use `make update-llama-cpp-ggml` so the llama.cpp submodule supports it (and nomic_bert if you switch to Nomic).
+
+**Troubleshooting:** If you get "failed to load model" or "unknown model architecture: 'nomic-bert'" (or similar):
+
+- **Try the default build first:** The go-llama.cpp submodule may already support your model. Run `make deps-gguf && make build-gguf` and test.
+- **Update llama.cpp (may fail):** Run `make update-llama-cpp` to use a newer ggerganov/llama.cpp. If that fails with compilation errors, go-llama.cpp's binding.cpp is incompatible with that version.
+- **Use ggml-org (experimental, may fail):** Run `make update-llama-cpp-ggml` to switch to ggml-org/llama.cpp. **Warning:** This often fails due to API incompatibilities (`load_binding_model` or `llama_binding_state` errors). If it fails, use the API backend instead.
+- **Use the API backend:** Run Ollama, `ollama pull nomic-embed-text`, then `QMD_EMBED_BACKEND=api ./qmd embed`.
 
 ## Environment Variables
 
@@ -364,9 +431,10 @@ Index stored in: `~/.cache/qmd/index.sqlite` (or `INDEX_PATH`; use `--index <nam
 | `XDG_CACHE_HOME` | `~/.cache` | Cache directory (index SQLite) |
 | `INDEX_PATH` | (derived) | Override index DB path |
 | `OLLAMA_HOST` | `http://localhost:11434/v1` | Ollama API base for embed (API backend only) |
-| `QMD_EMBED_MODEL` | `nomic-embed-text` | Embedding model name or GGUF path/spec |
-| `QMD_EMBED_BACKEND` | (auto) | `gguf` to force GGUF backend (requires build with `-tags gguf`) |
+| `QMD_EMBED_MODEL` | API: `nomic-embed-text`; GGUF build: EmbeddingGemma 300M (HF) | Embedding model name or GGUF path/spec |
+| `QMD_EMBED_BACKEND` | GGUF build: `gguf`; API build: (none) | `gguf` = use local GGUF; `api` = use Ollama/OpenAI (e.g. when using gguf binary but want API) |
 | `QMD_MODEL_CACHE` | `~/.cache/qmd/models` | Directory for downloaded GGUF models |
+| `LLAMA_GO_LIB` | (auto-detected) | Path to `libllama_go.so` / `llama_go.dll` / `libllama_go.dylib` (purego method) |
 
 For OpenAI-compatible APIs, set your provider’s base URL and API key (e.g. `OPENAI_API_BASE`, `OPENAI_API_KEY`); the Go CLI uses the same env names as typical OpenAI clients where applicable.
 

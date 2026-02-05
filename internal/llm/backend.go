@@ -23,11 +23,17 @@ func isGGUFSpec(model string) bool {
 }
 
 // NewEmbedClient returns an LLM implementation for embeddings.
-// If QMD_EMBED_BACKEND=gguf or model is a GGUF spec (path to .gguf, or "repo:file.gguf"),
-// a GGUF client is used (requires build with -tags gguf). Otherwise uses Ollama/OpenAI-compatible API.
+// When built with -tags gguf, tries purego first, then falls back to go-llama.cpp if purego lib not found.
+// Otherwise use GGUF if QMD_EMBED_BACKEND=gguf or model is a GGUF spec. Uses Ollama/OpenAI API otherwise.
 func NewEmbedClient(model string) (LLM, error) {
-	useGGUF := os.Getenv("QMD_EMBED_BACKEND") == "gguf" || isGGUFSpec(model)
+	backend := os.Getenv("QMD_EMBED_BACKEND")
+	useGGUF := backend == "gguf" || isGGUFSpec(model) || (GGUFEnabled() && backend != "api")
 	if useGGUF {
+		// Try purego first (kelindar/search method)
+		if client, err := newPuregoClient(model); err == nil {
+			return client, nil
+		}
+		// Fallback to go-llama.cpp (CGO method)
 		return newGGUFClient(model)
 	}
 	baseURL := os.Getenv("OLLAMA_HOST")

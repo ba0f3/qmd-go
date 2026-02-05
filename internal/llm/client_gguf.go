@@ -5,6 +5,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/ba0f3/qmd-go/internal/huggingface"
@@ -24,9 +25,15 @@ func newGGUFClient(model string) (LLM, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve GGUF model: %w", err)
 	}
+	// Verify file exists and is readable
+	if fi, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("model file not found: %s: %w", path, err)
+	} else if fi.Size() == 0 {
+		return nil, fmt.Errorf("model file is empty: %s", path)
+	}
 	l, err := llama.New(path, llama.EnableEmbeddings, llama.SetContext(2048))
 	if err != nil {
-		return nil, fmt.Errorf("load GGUF model: %w", err)
+		return nil, fmt.Errorf("load GGUF model from %s: %w (hint: use QMD_EMBED_BACKEND=api to use Ollama for embeddings)", path, err)
 	}
 	return &ggufClient{model: model, llama: l}, nil
 }

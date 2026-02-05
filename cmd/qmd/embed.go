@@ -11,8 +11,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const defaultEmbedModel = "nomic-embed-text"
-
 func formatDocForEmbedding(text, title string) string {
 	if title == "" {
 		title = "none"
@@ -43,7 +41,7 @@ var embedCmd = &cobra.Command{
 		force, _ := cmd.Flags().GetBool("force")
 		model := os.Getenv("QMD_EMBED_MODEL")
 		if model == "" {
-			model = defaultEmbedModel
+			model = llm.DefaultEmbedModel()
 		}
 
 		initRoot()
@@ -77,6 +75,14 @@ var embedCmd = &cobra.Command{
 			return
 		}
 
+		backend := os.Getenv("QMD_EMBED_BACKEND")
+		if backend == "" {
+			if llm.GGUFEnabled() {
+				backend = "gguf (default)"
+			} else {
+				backend = "api (default)"
+			}
+		}
 		client, err := llm.NewEmbedClient(model)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating embed client: %v\n", err)
@@ -88,7 +94,7 @@ var embedCmd = &cobra.Command{
 			chunks := store.ChunkDocument(h.Body, store.ChunkSizeChars, store.ChunkOverlapChars)
 			totalChunks += len(chunks)
 		}
-		fmt.Printf("Embedding %d documents (%d chunks), model: %s\n\n", len(hashes), totalChunks, model)
+		fmt.Printf("Embedding %d documents (%d chunks), model: %s, backend: %s\n\n", len(hashes), totalChunks, model, backend)
 
 		embedded := 0
 		errors := 0

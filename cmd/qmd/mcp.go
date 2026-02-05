@@ -15,7 +15,6 @@ import (
 )
 
 const (
-	mcpDefaultEmbedModel  = "nomic-embed-text"
 	mcpDefaultMultiGetMax = 10240
 	qmdQueryGuideTitle    = "QMD Query Guide"
 	qmdQueryGuideBody     = `# QMD - Quick Markdown Search
@@ -244,7 +243,7 @@ func vsearchTool(s *store.Store) func(context.Context, *mcp.CallToolRequest, vse
 		}
 		model := os.Getenv("QMD_EMBED_MODEL")
 		if model == "" {
-			model = mcpDefaultEmbedModel
+			model = llm.DefaultEmbedModel()
 		}
 		client, err := llm.NewEmbedClient(model)
 		if err != nil {
@@ -314,7 +313,7 @@ func queryTool(s *store.Store) func(context.Context, *mcp.CallToolRequest, query
 		if hasVec > 0 {
 			model := os.Getenv("QMD_EMBED_MODEL")
 			if model == "" {
-				model = mcpDefaultEmbedModel
+				model = llm.DefaultEmbedModel()
 			}
 			client, err := llm.NewEmbedClient(model)
 			if err == nil {

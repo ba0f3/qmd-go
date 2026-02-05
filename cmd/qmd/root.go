@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/ba0f3/qmd-go/internal/config"
+	"github.com/ba0f3/qmd-go/internal/llm"
 	"github.com/ba0f3/qmd-go/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -14,6 +15,21 @@ var rootCmd = &cobra.Command{
 	Short: "Quick Markdown Search",
 	Long: `An on-device search engine for everything you need to remember.
 Index your markdown notes, meeting transcripts, documentation, and knowledge bases.`,
+}
+
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Show version and build info",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println("qmd version 1.0.0")
+		if llm.GGUFEnabled() {
+			fmt.Println("Build: GGUF support enabled")
+			fmt.Printf("Default embed model: %s\n", llm.DefaultEmbedModel())
+		} else {
+			fmt.Println("Build: API backend only (Ollama/OpenAI)")
+			fmt.Printf("Default embed model: %s\n", llm.DefaultEmbedModel())
+		}
+	},
 }
 
 func getIndexName() string {
@@ -49,4 +65,5 @@ func Execute() {
 
 func init() {
 	rootCmd.PersistentFlags().String("index", "", "Use named index (default: index)")
+	rootCmd.AddCommand(versionCmd)
 }
