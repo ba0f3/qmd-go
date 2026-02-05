@@ -1,0 +1,121 @@
+# Build qmd and qmd-gguf binaries on version tags and publish to GitHub Releases.
+# Push a tag: git tag v1.0.0 && git push origin v1.0.0
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-qmd:
+    name: build qmd
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: arm64
+          - runner: macos-latest
+            goos: darwin
+            goarch: amd64
+          - runner: macos-latest
+            goos: darwin
+            goarch: arm64
+          - runner: windows-latest
+            goos: windows
+            goarch: amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+
+      - name: Build qmd
+        run: |
+          CGO_ENABLED=0 go build -tags fts5 -ldflags "-s -w" -o qmd${{ matrix.goos == 'windows' && '.exe' || '' }} ./cmd/qmd
+
+      - name: Rename artifact
+        run: |
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            mv qmd.exe qmd-${{ matrix.goos }}-${{ matrix.goarch }}.exe
+          else
+            mv qmd qmd-${{ matrix.goos }}-${{ matrix.goarch }}
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qmd-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: qmd-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+
+  build-qmd-gguf:
+    name: build qmd-gguf (Linux amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake git
+
+      - name: Clone go-llama.cpp and build libbinding
+        run: |
+          mkdir -p .deps
+          git clone --recurse-submodules --depth 1 https://github.com/go-skynet/go-llama.cpp .deps/go-llama.cpp
+          cd .deps/go-llama.cpp
+          find . -type f \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.patch' \) -print0 | xargs -0 -r sed -i 's/\r$//' 2>/dev/null || true
+          make libbinding.a
+
+      - name: Build qmd-gguf
+        run: |
+          go mod edit -replace=github.com/go-skynet/go-llama.cpp=./.deps/go-llama.cpp
+          CGO_ENABLED=1 go build -tags gguf,fts5 -ldflags "-s -w" -o qmd-gguf-linux-amd64 ./cmd/qmd
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qmd-gguf-linux-amd64
+          path: qmd-gguf-linux-amd64
+
+  release:
+    name: create release
+    runs-on: ubuntu-latest
+    needs: [build-qmd, build-qmd-gguf]
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          for f in artifacts/*/qmd*; do [ -f "$f" ] && cp "$f" release/; done
+          ls -la release/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          generate_release_notes: true
+          files: release/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
