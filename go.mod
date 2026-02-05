@@ -1,6 +1,6 @@
 module github.com/ba0f3/qmd-go
 
-go 1.24.3
+go 1.23
 
 require (
 	github.com/bmatcuk/doublestar/v4 v4.10.0
