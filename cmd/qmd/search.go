@@ -5,8 +5,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/ba0f3/qmd-go/internal/store"
 	"github.com/spf13/cobra"
-	"github.com/tobi/qmd-go/internal/store"
 )
 
 var searchCmd = &cobra.Command{

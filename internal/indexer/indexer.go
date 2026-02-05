@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/ba0f3/qmd-go/internal/store"
 	"github.com/bmatcuk/doublestar/v4"
-	"github.com/tobi/qmd-go/internal/store"
 )
 
 func IndexFiles(s *store.Store, collectionName, rootPath, pattern string) error {

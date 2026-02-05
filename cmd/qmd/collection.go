@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/ba0f3/qmd-go/internal/config"
 	"github.com/spf13/cobra"
-	"github.com/tobi/qmd-go/internal/config"
 )
 
 var collectionCmd = &cobra.Command{

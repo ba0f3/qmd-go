@@ -3,10 +3,10 @@ package main
 import (
 	"fmt"
 
+	"github.com/ba0f3/qmd-go/internal/config"
+	"github.com/ba0f3/qmd-go/internal/indexer"
+	"github.com/ba0f3/qmd-go/internal/store"
 	"github.com/spf13/cobra"
-	"github.com/tobi/qmd-go/internal/config"
-	"github.com/tobi/qmd-go/internal/indexer"
-	"github.com/tobi/qmd-go/internal/store"
 )
 
 var updateCmd = &cobra.Command{
