@@ -1,0 +1,149 @@
+package store
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	_ "github.com/mattn/go-sqlite3"
+)
+
+type Store struct {
+	DB     *sql.DB
+	DBPath string
+}
+
+func GetDefaultDbPath(indexName string) (string, error) {
+	if path := os.Getenv("INDEX_PATH"); path != "" {
+		return path, nil
+	}
+	if indexName == "" {
+		indexName = "index"
+	}
+
+	cacheDir := os.Getenv("XDG_CACHE_HOME")
+	if cacheDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		cacheDir = filepath.Join(home, ".cache")
+	}
+
+	qmdCacheDir := filepath.Join(cacheDir, "qmd")
+	if err := os.MkdirAll(qmdCacheDir, 0755); err != nil {
+		return "", err
+	}
+	return filepath.Join(qmdCacheDir, fmt.Sprintf("%s.sqlite", indexName)), nil
+}
+
+func NewStore(dbPath string) (*Store, error) {
+	if dbPath == "" {
+		var err error
+		dbPath, err = GetDefaultDbPath("index")
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Enable WAL mode via DSN
+	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_foreign_keys=on", dbPath)
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := db.Ping(); err != nil {
+		return nil, err
+	}
+
+	s := &Store{DB: db, DBPath: dbPath}
+	if err := s.initSchema(); err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	return s, nil
+}
+
+func (s *Store) Close() error {
+	return s.DB.Close()
+}
+
+func (s *Store) initSchema() error {
+	queries := []string{
+		`CREATE TABLE IF NOT EXISTS content (
+			hash TEXT PRIMARY KEY,
+			doc TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS documents (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			collection TEXT NOT NULL,
+			path TEXT NOT NULL,
+			title TEXT NOT NULL,
+			hash TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			modified_at TEXT NOT NULL,
+			active INTEGER NOT NULL DEFAULT 1,
+			FOREIGN KEY (hash) REFERENCES content(hash) ON DELETE CASCADE,
+			UNIQUE(collection, path)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_documents_collection ON documents(collection, active)`,
+		`CREATE INDEX IF NOT EXISTS idx_documents_hash ON documents(hash)`,
+		`CREATE INDEX IF NOT EXISTS idx_documents_path ON documents(path, active)`,
+		`CREATE TABLE IF NOT EXISTS llm_cache (
+			hash TEXT PRIMARY KEY,
+			result TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS content_vectors (
+			hash TEXT NOT NULL,
+			seq INTEGER NOT NULL DEFAULT 0,
+			pos INTEGER NOT NULL DEFAULT 0,
+			model TEXT NOT NULL,
+			embedded_at TEXT NOT NULL,
+			PRIMARY KEY (hash, seq)
+		)`,
+		// FTS5 table
+		`CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+			filepath, title, body,
+			tokenize='porter unicode61'
+		)`,
+		// Triggers
+		`CREATE TRIGGER IF NOT EXISTS documents_ai AFTER INSERT ON documents
+		WHEN new.active = 1
+		BEGIN
+			INSERT INTO documents_fts(rowid, filepath, title, body)
+			SELECT
+				new.id,
+				new.collection || '/' || new.path,
+				new.title,
+				(SELECT doc FROM content WHERE hash = new.hash)
+			WHERE new.active = 1;
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS documents_ad AFTER DELETE ON documents BEGIN
+			DELETE FROM documents_fts WHERE rowid = old.id;
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS documents_au AFTER UPDATE ON documents
+		BEGIN
+			DELETE FROM documents_fts WHERE rowid = old.id AND new.active = 0;
+			INSERT OR REPLACE INTO documents_fts(rowid, filepath, title, body)
+			SELECT
+				new.id,
+				new.collection || '/' || new.path,
+				new.title,
+				(SELECT doc FROM content WHERE hash = new.hash)
+			WHERE new.active = 1;
+		END`,
+	}
+
+	for _, query := range queries {
+		if _, err := s.DB.Exec(query); err != nil {
+			return fmt.Errorf("schema init failed: %w (query: %s)", err, query)
+		}
+	}
+
+	return nil
+}
