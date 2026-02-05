@@ -29,6 +29,7 @@ func IndexFiles(s *store.Store, collectionName, rootPath, pattern string) error 
 		fullPath := filepath.Join(rootPath, relPath)
 		info, err := os.Stat(fullPath)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error stating file %s: %v\n", fullPath, err)
 			continue
 		}
 		if info.IsDir() {
@@ -39,6 +40,7 @@ func IndexFiles(s *store.Store, collectionName, rootPath, pattern string) error 
 
 		contentBytes, err := os.ReadFile(fullPath)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", fullPath, err)
 			continue
 		}
 		content := string(contentBytes)
@@ -50,14 +52,26 @@ func IndexFiles(s *store.Store, collectionName, rootPath, pattern string) error 
 		if err == nil {
 			// Update if changed
 			if doc.Hash != hash {
-				s.InsertContent(hash, content, now)
-				s.UpdateDocument(doc.ID, title, hash, now)
+				if err := s.InsertContent(hash, content, now); err != nil {
+					fmt.Fprintf(os.Stderr, "Error inserting content for %s: %v\n", relPath, err)
+					continue
+				}
+				if err := s.UpdateDocument(doc.ID, title, hash, now); err != nil {
+					fmt.Fprintf(os.Stderr, "Error updating document %s: %v\n", relPath, err)
+					continue
+				}
 				updatedCount++
 			}
 		} else {
 			// Insert new
-			s.InsertContent(hash, content, now)
-			s.InsertDocument(collectionName, relPath, title, hash, info.ModTime(), now)
+			if err := s.InsertContent(hash, content, now); err != nil {
+				fmt.Fprintf(os.Stderr, "Error inserting content for %s: %v\n", relPath, err)
+				continue
+			}
+			if err := s.InsertDocument(collectionName, relPath, title, hash, info.ModTime(), now); err != nil {
+				fmt.Fprintf(os.Stderr, "Error inserting document %s: %v\n", relPath, err)
+				continue
+			}
 			indexedCount++
 		}
 	}
@@ -68,14 +82,21 @@ func IndexFiles(s *store.Store, collectionName, rootPath, pattern string) error 
 	if err == nil {
 		for _, path := range activePaths {
 			if !seenPaths[path] {
-				s.DeactivateDocument(collectionName, path)
+				if err := s.DeactivateDocument(collectionName, path); err != nil {
+					fmt.Fprintf(os.Stderr, "Error deactivating document %s: %v\n", path, err)
+					continue
+				}
 				removedCount++
 			}
 		}
+	} else {
+		fmt.Fprintf(os.Stderr, "Error getting active documents: %v\n", err)
 	}
 
 	// Cleanup orphans
-	s.CleanupOrphanedContent()
+	if _, err := s.CleanupOrphanedContent(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error cleaning up orphans: %v\n", err)
+	}
 
 	fmt.Printf("Collection '%s': Indexed %d new, Updated %d, Removed %d.\n", collectionName, indexedCount, updatedCount, removedCount)
 	return nil
