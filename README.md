@@ -113,7 +113,7 @@ Or configure MCP manually in `~/.claude/settings.json`:
 ## Architecture
 
 - **SQLite FTS5** – Full-text search (BM25)
-- **Embeddings** – Stored in SQLite; generated via Ollama or any OpenAI-compatible embedding API
+- **Embeddings** – Stored in SQLite; generated via Ollama, any OpenAI-compatible API, or local GGUF (purego, no CGO)
 - **Hybrid search** – `query` combines BM25 and vector results using Reciprocal Rank Fusion (RRF)
 - **Chunking** – 800 tokens per chunk, 15% overlap (character-based in Go)
 - **Index** – `~/.cache/qmd/index.sqlite` (or `INDEX_PATH`)
@@ -131,14 +131,14 @@ Query ──┬──► BM25 (FTS5) ──► Ranked list
 
 - **Go** 1.23 or later (for building)
 - **SQLite** with FTS5 (e.g. `github.com/mattn/go-sqlite3` – enable via build tag `fts5`)
-- **Embeddings**: [Ollama](https://ollama.ai) (default) or any OpenAI-compatible API (set `OLLAMA_HOST` or use `OPENAI_API_BASE` + `OPENAI_API_KEY` for embed)
+- **Embeddings**: [Ollama](https://ollama.ai) (default), any OpenAI-compatible API, or local GGUF via **purego** (no CGO; build `libllama_go` with `make deps-purego` and `make build-purego`)
 
 ### Build tags
 
 | Tag   | Purpose |
 |-------|---------|
 | `fts5` | **Use for normal builds.** Enables SQLite FTS5 full-text search. Without it, `qmd search` and related features will not work. |
-| `gguf` | Optional. Enables local/Hugging Face GGUF embedding models (no Ollama required). Requires CGO and [go-llama.cpp](https://github.com/go-skynet/go-llama.cpp); use `make deps-gguf` then `make build-gguf`. |
+| `gguf` | Optional. Enables local GGUF embedding models (no Ollama required). **Preferred: purego (no CGO)** — build the shared library with `make deps-purego` and `make build-purego`, then `make build-gguf`. Fallback: CGO with [go-llama.cpp](https://github.com/go-skynet/go-llama.cpp) via `make deps-gguf` then `make build-gguf`. |
 
 **Examples:** `make build` (outputs `qmd-go`) or `go build -tags fts5 -o qmd-go ./cmd/qmd`. For GGUF embeddings: `make build-gguf`.
 
@@ -180,7 +180,15 @@ go test ./...
 
 ### Testing the GGUF build
 
-1. **Build with GGUF** (requires [go-llama.cpp](https://github.com/go-skynet/go-llama.cpp) deps):
+1. **Build with GGUF** (purego, no CGO — recommended):
+
+   ```sh
+   make deps-purego  # once: clone llama.cpp into llama-go/
+   make build-purego # build libllama_go (shared library)
+   make build-gguf   # produces qmd-go (loads lib at runtime)
+   ```
+
+   Or with CGO (go-llama.cpp) as fallback:
 
    ```sh
    make deps-gguf    # once: clone go-llama.cpp, build libbinding.a
@@ -383,22 +391,22 @@ If you prefer to keep using the API (Ollama/OpenAI) for embeddings even with a G
 QMD_EMBED_BACKEND=api ./qmd embed
 ```
 
-To build with GGUF support, qmd uses two methods (tries purego first, falls back to CGO):
+To build with GGUF support, qmd supports two methods. **Purego (no CGO) is recommended**: no C compiler or CGO required for the Go binary; only the shared library is built with CMake. At runtime the binary tries purego first, then falls back to CGO if the library is not found.
 
-   **Method 1: Purego (kelindar/search method, no CGO)** — recommended for easier cross-compilation:
+   **Method 1: Purego (no CGO)** — recommended; no CGO for the Go build; cross-compile the Go binary and build the shared library on the target (or ship the lib with the binary):
    ```sh
-   make deps-purego  # clone llama.cpp submodule (once)
-   make build-purego # build shared library (libllama_go.so / .dll / .dylib)
-   make build-gguf   # build qmd with -tags gguf,fts5 (uses purego if lib found)
+   make deps-purego  # clone llama.cpp into llama-go/ (once)
+   make build-purego # build shared library (libllama_go.so / .dll / .dylib in llama-go/build/)
+   make build-gguf   # build qmd with -tags gguf,fts5 (loads lib at runtime via purego)
    ```
+   Set `LLAMA_GO_LIB` to the path of the shared library if it is not in the default location (`llama-go/build/` next to the repo).
 
-   **Method 2: CGO (go-llama.cpp)** — fallback if purego lib not found:
+   **Method 2: CGO (go-llama.cpp)** — fallback if the purego library is not available:
    ```sh
    make deps-gguf   # clone go-llama.cpp + submodules, build libbinding.a (once)
    make build-gguf  # add replace in go.mod and build qmd with -tags gguf,fts5
    ```
-
-   The purego method builds a shared library (`llama-go/build/libllama_go.so`) that qmd loads at runtime. The CGO method compiles go-llama.cpp's binding directly into the binary.
+   The CGO method compiles go-llama.cpp's binding into the binary; CGO and a C/C++ toolchain are required.
 
 2. **GGUF models (Tobi's setup)** — the reference TypeScript/Bun qmd uses three local GGUF models (auto-downloaded from Hugging Face into `~/.cache/qmd/models/`):
 
