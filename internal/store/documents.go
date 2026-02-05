@@ -2,7 +2,9 @@ package store
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
+	"strings"
 	"time"
 )
 
@@ -102,4 +104,123 @@ func (s *Store) CleanupOrphanedContent() (int64, error) {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// DocPath is a document path entry for listing or glob matching.
+type DocPath struct {
+	Filepath    string
+	DisplayPath string
+	BodyLength  int64
+	Collection  string
+	Path        string
+}
+
+// GetDocumentBody returns the content body for a document by collection and path.
+// fromLine is 1-based; maxLines limits output lines (0 = all).
+func (s *Store) GetDocumentBody(collection, path string, fromLine, maxLines int) (string, error) {
+	var body string
+	err := s.DB.QueryRow(`
+		SELECT content.doc
+		FROM documents d
+		JOIN content ON content.hash = d.hash
+		WHERE d.collection = ? AND d.path = ? AND d.active = 1
+	`, collection, path).Scan(&body)
+	if err != nil {
+		return "", err
+	}
+	if fromLine > 0 || maxLines > 0 {
+		body = sliceLines(body, fromLine, maxLines)
+	}
+	return body, nil
+}
+
+func sliceLines(text string, fromLine, maxLines int) string {
+	lines := strings.Split(text, "\n")
+	if fromLine > 0 {
+		if fromLine > len(lines) {
+			return ""
+		}
+		lines = lines[fromLine-1:]
+	}
+	if maxLines > 0 && len(lines) > maxLines {
+		lines = lines[:maxLines]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// FindByDocid finds a document by short docid (first 6 chars of hash).
+// Returns collection, path, and full hash. Empty strings if not found.
+func (s *Store) FindByDocid(docid string) (collection, path, hash string, err error) {
+	docid = strings.TrimSpace(docid)
+	docid = strings.TrimPrefix(docid, "#")
+	if len(docid) == 0 {
+		return "", "", "", nil
+	}
+	err = s.DB.QueryRow(`
+		SELECT d.collection, d.path, d.hash
+		FROM documents d
+		WHERE d.hash LIKE ? AND d.active = 1
+		LIMIT 1
+	`, docid+"%").Scan(&collection, &path, &hash)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", "", "", nil
+		}
+		return "", "", "", err
+	}
+	return collection, path, hash, nil
+}
+
+// ListDocumentPaths returns all active documents with filepath, display path, and body length.
+func (s *Store) ListDocumentPaths() ([]DocPath, error) {
+	rows, err := s.DB.Query(`
+		SELECT
+			'qmd://' || d.collection || '/' || d.path AS filepath,
+			d.collection || '/' || d.path AS display_path,
+			LENGTH(content.doc) AS body_length,
+			d.collection,
+			d.path
+		FROM documents d
+		JOIN content ON content.hash = d.hash
+		WHERE d.active = 1
+		ORDER BY d.collection, d.path
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DocPath
+	for rows.Next() {
+		var d DocPath
+		if err := rows.Scan(&d.Filepath, &d.DisplayPath, &d.BodyLength, &d.Collection, &d.Path); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// GetDocumentByVirtualPath returns body for a document identified by virtual path (qmd://collection/path).
+func (s *Store) GetDocumentByVirtualPath(virtualPath string) (collection, path, body string, err error) {
+	if !strings.HasPrefix(virtualPath, "qmd://") {
+		return "", "", "", nil
+	}
+	rest := strings.TrimPrefix(virtualPath, "qmd://")
+	idx := strings.Index(rest, "/")
+	if idx < 0 {
+		return "", "", "", nil
+	}
+	collection = rest[:idx]
+	path = rest[idx+1:]
+	var b string
+	err = s.DB.QueryRow(`
+		SELECT content.doc
+		FROM documents d
+		JOIN content ON content.hash = d.hash
+		WHERE d.collection = ? AND d.path = ? AND d.active = 1
+	`, collection, path).Scan(&b)
+	if err != nil {
+		return "", "", "", err
+	}
+	return collection, path, b, nil
 }

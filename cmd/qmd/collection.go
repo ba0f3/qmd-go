@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/ba0f3/qmd-go/internal/config"
+	"github.com/ba0f3/qmd-go/internal/indexer"
 	"github.com/spf13/cobra"
 )
 
@@ -18,6 +19,7 @@ var collectionListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all collections",
 	Run: func(cmd *cobra.Command, args []string) {
+		initRoot()
 		cfg, err := config.LoadConfig()
 		if err != nil {
 			fmt.Printf("Error loading config: %v\n", err)
@@ -41,17 +43,25 @@ var collectionAddCmd = &cobra.Command{
 	Short: "Add a collection",
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		initRoot()
 		path := "."
 		if len(args) > 0 {
 			path = args[0]
 		}
-		absPath, _ := filepath.Abs(path)
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			fmt.Printf("Invalid path: %v\n", err)
+			os.Exit(1)
+		}
 
 		name, _ := cmd.Flags().GetString("name")
 		if name == "" {
 			name = filepath.Base(absPath)
 		}
 		pattern, _ := cmd.Flags().GetString("mask")
+		if pattern == "" {
+			pattern = "**/*.md"
+		}
 
 		cfg, err := config.LoadConfig()
 		if err != nil {
@@ -73,15 +83,29 @@ var collectionAddCmd = &cobra.Command{
 			fmt.Printf("Error saving config: %v\n", err)
 			os.Exit(1)
 		}
+
+		s, err := openStore()
+		if err != nil {
+			fmt.Printf("Error opening store: %v\n", err)
+			os.Exit(1)
+		}
+		defer s.Close()
+		fmt.Printf("Indexing collection '%s'...\n", name)
+		if err := indexer.IndexFiles(s, name, absPath, pattern); err != nil {
+			fmt.Printf("Error indexing: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Printf("Collection '%s' added.\n", name)
 	},
 }
 
 var collectionRemoveCmd = &cobra.Command{
-	Use:   "remove [name]",
-	Short: "Remove a collection",
-	Args:  cobra.ExactArgs(1),
+	Use:     "remove [name]",
+	Aliases: []string{"rm"},
+	Short:   "Remove a collection",
+	Args:    cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		initRoot()
 		name := args[0]
 		cfg, err := config.LoadConfig()
 		if err != nil {
@@ -95,12 +119,58 @@ var collectionRemoveCmd = &cobra.Command{
 		}
 
 		delete(cfg.Collections, name)
-
 		if err := config.SaveConfig(cfg); err != nil {
 			fmt.Printf("Error saving config: %v\n", err)
 			os.Exit(1)
 		}
+		s, err := openStore()
+		if err == nil {
+			_, _ = s.DB.Exec(`DELETE FROM documents WHERE collection = ?`, name)
+			s.Close()
+		}
 		fmt.Printf("Collection '%s' removed.\n", name)
+	},
+}
+
+var collectionRenameCmd = &cobra.Command{
+	Use:     "rename <old> <new>",
+	Aliases: []string{"mv"},
+	Short:   "Rename a collection",
+	Args:    cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		initRoot()
+		oldName, newName := args[0], args[1]
+		cfg, err := config.LoadConfig()
+		if err != nil {
+			fmt.Printf("Error loading config: %v\n", err)
+			os.Exit(1)
+		}
+		if _, exists := cfg.Collections[oldName]; !exists {
+			fmt.Printf("Collection '%s' not found.\n", oldName)
+			os.Exit(1)
+		}
+		if _, exists := cfg.Collections[newName]; exists {
+			fmt.Printf("Collection '%s' already exists.\n", newName)
+			os.Exit(1)
+		}
+		cfg.Collections[newName] = cfg.Collections[oldName]
+		delete(cfg.Collections, oldName)
+		if err := config.SaveConfig(cfg); err != nil {
+			fmt.Printf("Error saving config: %v\n", err)
+			os.Exit(1)
+		}
+		s, err := openStore()
+		if err != nil {
+			fmt.Printf("Error opening store: %v\n", err)
+			os.Exit(1)
+		}
+		defer s.Close()
+		_, err = s.DB.Exec(`UPDATE documents SET collection = ? WHERE collection = ?`, newName, oldName)
+		if err != nil {
+			fmt.Printf("Error updating documents: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Renamed '%s' to '%s' (qmd://%s/)\n", oldName, newName, newName)
 	},
 }
 
@@ -111,5 +181,6 @@ func init() {
 	collectionCmd.AddCommand(collectionListCmd)
 	collectionCmd.AddCommand(collectionAddCmd)
 	collectionCmd.AddCommand(collectionRemoveCmd)
+	collectionCmd.AddCommand(collectionRenameCmd)
 	rootCmd.AddCommand(collectionCmd)
 }

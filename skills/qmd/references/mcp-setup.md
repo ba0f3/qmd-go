@@ -57,7 +57,7 @@ Semantic vector search for conceptual similarity.
 - `minScore` (optional): Minimum relevance score
 
 ### qmd_query
-Hybrid search combining BM25, vector search, and LLM re-ranking.
+Hybrid search combining BM25 and vector search (RRF).
 
 **Parameters:**
 - `query` (required): Search query string
@@ -90,7 +90,7 @@ Get index health and collection information.
 ### MCP server not starting
 - Ensure qmd is in your PATH: `which qmd`
 - Try running `qmd mcp` manually to see errors
-- Check that Bun is installed: `bun --version`
+- Install with: `go install ./cmd/qmd@latest` or build from source
 
 ### No results returned
 - Verify collections exist: `qmd collection list`
@@ -99,8 +99,7 @@ Get index health and collection information.
 
 ### Slow searches
 - For faster results, use `qmd_search` instead of `qmd_query`
-- The first search may be slow while models load (~3GB)
-- Subsequent searches are much faster
+- Vector search requires embeddings (run `qmd embed`) and an embedding API (e.g. Ollama)
 
 ## Choosing Between CLI and MCP
 

@@ -77,3 +77,101 @@ func SaveConfig(cfg *Config) error {
 
 	return os.WriteFile(path, data, 0644)
 }
+
+// SetGlobalContext sets or clears the global context (applies to all collections).
+func SetGlobalContext(cfg *Config, text string) {
+	cfg.GlobalContext = text
+}
+
+// AddContext adds or updates context for a path prefix in a collection.
+// pathPrefix can be "" or "/" for collection root. Returns false if collection does not exist.
+func AddContext(cfg *Config, collectionName, pathPrefix, text string) bool {
+	col, ok := cfg.Collections[collectionName]
+	if !ok {
+		return false
+	}
+	if col.Context == nil {
+		col.Context = make(map[string]string)
+	}
+	if pathPrefix == "" {
+		pathPrefix = "/"
+	}
+	col.Context[pathPrefix] = text
+	cfg.Collections[collectionName] = col
+	return true
+}
+
+// RemoveContext removes context for a path prefix. Returns false if not found.
+func RemoveContext(cfg *Config, collectionName, pathPrefix string) bool {
+	col, ok := cfg.Collections[collectionName]
+	if !ok || col.Context == nil {
+		return false
+	}
+	if pathPrefix == "" {
+		pathPrefix = "/"
+	}
+	if _, ok := col.Context[pathPrefix]; !ok {
+		return false
+	}
+	delete(col.Context, pathPrefix)
+	if len(col.Context) == 0 {
+		col.Context = nil
+	}
+	cfg.Collections[collectionName] = col
+	return true
+}
+
+// ContextEntry is a single context listing entry.
+type ContextEntry struct {
+	Collection string
+	Path       string
+	Context    string
+}
+
+// ListAllContexts returns all configured contexts (global first, then per collection).
+func ListAllContexts(cfg *Config) []ContextEntry {
+	var out []ContextEntry
+	if cfg.GlobalContext != "" {
+		out = append(out, ContextEntry{Collection: "*", Path: "/", Context: cfg.GlobalContext})
+	}
+	for name, col := range cfg.Collections {
+		if col.Context == nil {
+			continue
+		}
+		for path, ctx := range col.Context {
+			p := path
+			if p == "" {
+				p = "/"
+			}
+			out = append(out, ContextEntry{Collection: name, Path: p, Context: ctx})
+		}
+	}
+	return out
+}
+
+// FindContextForPath returns the most specific context for a collection and file path.
+func FindContextForPath(cfg *Config, collectionName, filePath string) string {
+	if filePath != "" && filePath[0] != '/' {
+		filePath = "/" + filePath
+	}
+	bestLen := 0
+	var bestCtx string
+	col, ok := cfg.Collections[collectionName]
+	if ok && col.Context != nil {
+		for prefix, ctx := range col.Context {
+			p := prefix
+			if p == "" {
+				p = "/"
+			}
+			matches := p == "/" || (len(filePath) >= len(p) && filePath[:len(p)] == p && (len(filePath) == len(p) || filePath[len(p)] == '/'))
+			if matches && len(p) > bestLen {
+				bestLen = len(p)
+				bestCtx = ctx
+			}
+		}
+		if bestCtx != "" {
+			return bestCtx
+		}
+	}
+	return cfg.GlobalContext
+}

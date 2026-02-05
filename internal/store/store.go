@@ -71,6 +71,53 @@ func (s *Store) Close() error {
 	return s.DB.Close()
 }
 
+// Status holds index status for the status command.
+type Status struct {
+	DBPath      string
+	DocCount    int
+	VectorCount int
+	Collections []CollectionStatus
+}
+
+// CollectionStatus is per-collection stats.
+type CollectionStatus struct {
+	Name         string
+	ActiveCount  int
+	LastModified string
+}
+
+// GetStatus returns index path, document count, vector count, and per-collection stats.
+func (s *Store) GetStatus() (*Status, error) {
+	st := &Status{DBPath: s.DBPath}
+	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM documents WHERE active = 1`).Scan(&st.DocCount); err != nil {
+		return nil, err
+	}
+	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM content_vectors`).Scan(&st.VectorCount)
+
+	rows, err := s.DB.Query(`
+		SELECT collection, COUNT(*) as cnt, MAX(modified_at) as last_modified
+		FROM documents WHERE active = 1
+		GROUP BY collection
+		ORDER BY collection
+	`)
+	if err != nil {
+		return st, nil
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var c CollectionStatus
+		var lastMod sql.NullString
+		if err := rows.Scan(&c.Name, &c.ActiveCount, &lastMod); err != nil {
+			continue
+		}
+		if lastMod.Valid {
+			c.LastModified = lastMod.String
+		}
+		st.Collections = append(st.Collections, c)
+	}
+	return st, rows.Err()
+}
+
 func (s *Store) initSchema() error {
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS content (

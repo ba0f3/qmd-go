@@ -139,7 +139,7 @@ func TestEvalHarnessSearch(t *testing.T) {
 
 	t.Log("=== Evaluating SEARCH mode ===")
 	for _, q := range evalQueries {
-		results, err := s.SearchFTS(q.query, 5)
+		results, err := s.SearchFTS(q.query, 5, "")
 		if err != nil {
 			t.Logf("SearchFTS %q: %v", q.query, err)
 			stats[q.difficulty].add(-1)

@@ -1,22 +1,22 @@
 {
-	"name": "qmd",
+	"name": "qmd-go",
 	"owner": {
-		"name": "tobi",
-		"email": "tobi@lutke.com"
+		"name": "ba0f3",
+		"email": "me@huy.im"
 	},
 	"plugins": [
 		{
 			"name": "qmd",
 			"source": "./",
-			"description": "Search and retrieve documents from local markdown files.",
+			"description": "Search and retrieve documents from local markdown files (Go port of tobi/qmd).",
 			"version": "0.1.0",
 			"author": {
-				"name": "tobi",
-				"email": "tobi@lutke.com"
+				"name": "ba0f3",
+				"email": "me@huy.im"
 			},
-			"repository": "https://github.com/tobi/qmd",
+			"repository": "https://github.com/ba0f3/qmd-go",
 			"license": "MIT",
-			"keywords": ["markdown", "search", "qmd"],
+			"keywords": ["markdown", "search", "qmd", "go"],
 			"skills": ["./skills/"],
 			"mcpServers": {
 				"qmd": {

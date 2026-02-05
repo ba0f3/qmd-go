@@ -38,13 +38,13 @@ func BuildFTS5Query(query string) string {
 	return strings.Join(validTerms, " AND ")
 }
 
-func (s *Store) SearchFTS(query string, limit int) ([]SearchResult, error) {
+func (s *Store) SearchFTS(query string, limit int, collectionFilter string) ([]SearchResult, error) {
 	ftsQuery := BuildFTS5Query(query)
 	if ftsQuery == "" {
 		return []SearchResult{}, nil
 	}
 
-	rows, err := s.DB.Query(`
+	sql := `
 		SELECT
 			'qmd://' || d.collection || '/' || d.path as filepath,
 			d.collection || '/' || d.path as display_path,
@@ -57,9 +57,16 @@ func (s *Store) SearchFTS(query string, limit int) ([]SearchResult, error) {
 		JOIN documents d ON d.id = f.rowid
 		JOIN content ON content.hash = d.hash
 		WHERE documents_fts MATCH ? AND d.active = 1
-		ORDER BY bm25_score ASC
-		LIMIT ?
-	`, ftsQuery, limit)
+	`
+	args := []interface{}{ftsQuery}
+	if collectionFilter != "" {
+		sql += ` AND d.collection = ?`
+		args = append(args, collectionFilter)
+	}
+	sql += ` ORDER BY bm25_score ASC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.DB.Query(sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +82,7 @@ func (s *Store) SearchFTS(query string, limit int) ([]SearchResult, error) {
 		// Normalize BM25 (negative, lower is better)
 		// Map to 0-1 where higher is better using sigmoid-ish logic from original
 		absScore := math.Abs(bm25Score)
-		r.Score = 1.0 / (1.0 + math.Exp(-(absScore - 5.0) / 3.0))
+		r.Score = 1.0 / (1.0 + math.Exp(-(absScore-5.0)/3.0))
 		r.Source = "fts"
 		results = append(results, r)
 	}

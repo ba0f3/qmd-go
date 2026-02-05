@@ -32,7 +32,7 @@ func TestSearchFTS(t *testing.T) {
 	s.InsertDocument("testcol", "apple.md", "Apple Doc", hash2, now, now)
 
 	// Search for "banana"
-	results, err := s.SearchFTS("banana", 10)
+	results, err := s.SearchFTS("banana", 10, "")
 	if err != nil {
 		t.Fatalf("SearchFTS failed: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestSearchFTS(t *testing.T) {
 	}
 
 	// Search for "test"
-	results, err = s.SearchFTS("test", 10)
+	results, err = s.SearchFTS("test", 10, "")
 	if err != nil {
 		t.Fatalf("SearchFTS failed: %v", err)
 	}

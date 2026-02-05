@@ -1,6 +1,6 @@
 # QMD - Query Markup Documents
 
-Use Bun instead of Node.js (`bun` not `node`, `bun install` not `npm install`).
+QMD is implemented in **Go**. Use the Go CLI and avoid modifying the SQLite index directly.
 
 ## Commands
 
@@ -17,11 +17,13 @@ qmd context rm <path>             # Remove context
 qmd get <file>                    # Get document by path or docid (#abc123)
 qmd multi-get <pattern>           # Get multiple docs by glob or comma-separated list
 qmd status                        # Show index status and collections
-qmd update [--pull]               # Re-index all collections (--pull: git pull first)
-qmd embed                         # Generate vector embeddings (uses node-llama-cpp)
+qmd update [--pull] [--full]     # Re-index all collections (--pull: git pull first)
+qmd embed                         # Generate vector embeddings (Ollama or OpenAI-compatible API)
 qmd search <query>                # BM25 full-text search
 qmd vsearch <query>               # Vector similarity search
-qmd query <query>                 # Hybrid search with reranking (best quality)
+qmd query <query>                 # Hybrid search (BM25 + vector, RRF)
+qmd mcp                           # Run MCP server (stdio)
+qmd cleanup                       # Remove cache, orphaned data, vacuum DB
 ```
 
 ## Collection Management
@@ -86,7 +88,7 @@ qmd search "query" --json
 
 # Get document by docid
 qmd get "#abc123"
-qmd get abc123              # Leading # is optional
+qmd get abc123  # Leading # is optional
 
 # Docids also work in multi-get comma-separated lists
 qmd multi-get "#abc123, #def456"
@@ -114,17 +116,17 @@ qmd multi-get "#abc123, #def456"
 ## Development
 
 ```sh
-bun src/qmd.ts <command>   # Run from source
-bun link               # Install globally as 'qmd'
+go build -o qmd-go ./cmd/qmd   # Build binary
+./qmd --help                   # From repo: script runs go run or qmd-go
+go test ./...
 ```
 
 ## Architecture
 
 - SQLite FTS5 for full-text search (BM25)
-- sqlite-vec for vector similarity search
-- node-llama-cpp for embeddings (embeddinggemma), reranking (qwen3-reranker), and query expansion (Qwen3)
-- Reciprocal Rank Fusion (RRF) for combining results
-- Token-based chunking: 800 tokens/chunk with 15% overlap
+- Embeddings stored in SQLite (embedding_blobs); generated via Ollama or OpenAI-compatible API
+- Reciprocal Rank Fusion (RRF) for combining BM25 and vector results
+- Token-based chunking: 800 tokens/chunk with 15% overlap (character-based in Go)
 
 ## Important: Do NOT run automatically
 
@@ -132,8 +134,3 @@ bun link               # Install globally as 'qmd'
 - Never modify the SQLite database directly
 - Write out example commands for the user to run manually
 - Index is stored at `~/.cache/qmd/index.sqlite`
-
-## Do NOT compile
-
-- Never run `bun build --compile` - it overwrites the shell wrapper and breaks sqlite-vec
-- The `qmd` file is a shell script that runs `bun src/qmd.ts` - do not replace it

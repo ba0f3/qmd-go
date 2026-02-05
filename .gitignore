@@ -4,7 +4,6 @@ node_modules/
 archive/
 texts/
 .cursor/
-*.md
 !README.md
 !CLAUDE.md
 !skills/**/*.md
@@ -12,3 +11,4 @@ texts/
 finetune/outputs/
 finetune/data/train/
 qmd
+!qmd/
